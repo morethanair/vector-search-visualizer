@@ -1,4 +1,6 @@
 streamlit==1.32.0
-plotly==5.18.0
-numpy==1.24.3
-pandas==2.0.3
+pandas
+numpy>=1.25.0
+plotly==5.22.0
+scikit-learn
+streamlit-plotly-events
