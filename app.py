@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-# from streamlit_plotly_events import plotly_events # Ensure this is removed or commented out
 from utils import (
     generate_users, generate_products, update_user_vector,
     find_similar_products, find_similar_users, record_user_like,
@@ -204,7 +203,7 @@ with col1:
 
     # Highlight recommended products if enabled
     if st.session_state.highlight_recommendations:
-        recommended_products = find_similar_products(user_vector, products_df, n=N_RECOMMENDATIONS)
+        recommended_products = find_similar_products(user_vector, products_df, top_n=N_RECOMMENDATIONS)
         for product_id in recommended_products['product_id']:
             try:
                 rec_index = product_id_list.index(product_id)
@@ -326,38 +325,34 @@ with col1:
     st.plotly_chart(fig, use_container_width=True)
 
 with col2:
-    st.header("🎨 Recommended Colors")
-    
-    # Get recommendations
-    recommended_products = find_similar_products(user_vector, products_df, n=N_RECOMMENDATIONS)
-    
-    # Display recommendations
-    for _, product in recommended_products.iterrows():
-        product_id = product['product_id']
-        vector = product['vector']
-        
-        # Create color box
-        color = f'rgb({int(vector[0]*255)}, {int(vector[1]*255)}, {int(vector[2]*255)})'
-        st.markdown(
-            f"""
-            <div style="
-                background-color: {color};
-                width: 100%;
-                height: 50px;
-                margin: 5px 0;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                color: {'white' if sum(vector) < 1.5 else 'black'};
-                border-radius: 5px;
-                cursor: pointer;
-            ">
-                {product_id}
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+    st.header(f"🎨 Top {N_RECOMMENDATIONS} Recommended Colors") # Updated header
 
-        # Like button for each recommendation
-        if st.button(f"👍 Like", key=f"like_{product_id}"):
-            handle_like_action(selected_user_id, product_id)
+    # --- Product Recommendation Logic ---
+    recommended_products_df = find_similar_products(user_vector, products_df, top_n=N_RECOMMENDATIONS)
+
+    if recommended_products_df.empty:
+        st.write("추천할 상품 (색상)이 없습니다.") # Updated text
+    else:
+        st.write(f"Colors closest to your preference vector:") # Simplified text
+
+        # --- Display Only Colors ---
+        for idx, row in recommended_products_df.iterrows():
+            # Display only the color picker as a visual swatch
+            st.color_picker(f"Color_{row['product_id']}",
+                            value=row['color'],
+                            disabled=True,
+                            label_visibility="collapsed",
+                            key=f"rec_color_{row['product_id']}") # Ensure unique key
+
+st.divider()
+st.markdown("**Debug Info:**")
+st.write("Selected User Vector:", user_vector)
+if st.session_state.previous_user_vector is not None:
+    st.write("Previous User Vector:", st.session_state.previous_user_vector)
+st.write("Liked Products:", get_user_likes(selected_user_id)) # Use getter for consistency
+if st.session_state.last_liked_product_id:
+    st.write("Last Liked Product:", st.session_state.last_liked_product_id)
+if st.session_state.show_similar_users:
+    # Regenerate similar users list for debug info consistency
+    similar_users_dbg = find_similar_users(user_vector, users_df, selected_user_id, top_n=N_SIMILAR_USERS)
+    st.write("Similar Users:", similar_users_dbg['user_id'].tolist() if not similar_users_dbg.empty else [])
