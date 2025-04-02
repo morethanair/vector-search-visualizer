@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+# from streamlit_plotly_events import plotly_events # Ensure this is removed or commented out
 from utils import (
     generate_users, generate_products, update_user_vector,
     find_similar_products, find_similar_users, record_user_like,
@@ -198,21 +199,13 @@ with col1:
             last_liked_index = product_id_list.index(st.session_state.last_liked_product_id)
             product_rgb_colors[last_liked_index] = 'lime'
             product_sizes[last_liked_index] = 10
-        except ValueError:
-            st.warning("Could not highlight last liked product.")
+        except (ValueError, IndexError):
+             # Handle gracefully if index not found (should not happen in normal flow)
+             pass 
 
-    # Highlight recommended products if enabled
-    if st.session_state.highlight_recommendations:
-        recommended_products = find_similar_products(user_vector, products_df, top_n=N_RECOMMENDATIONS)
-        for product_id in recommended_products['product_id']:
-            try:
-                rec_index = product_id_list.index(product_id)
-                product_rgb_colors[rec_index] = 'yellow'
-                product_sizes[rec_index] = 8
-            except ValueError:
-                continue
+    # Store product IDs in customdata (might be useful for hover, though click is disabled)
+    product_ids_for_trace = products_df['product_id'].tolist()
 
-    # Add all products scatter plot
     fig.add_trace(go.Scatter3d(
         x=product_vectors[:, 0],
         y=product_vectors[:, 1],
@@ -221,78 +214,95 @@ with col1:
         marker=dict(
             size=product_sizes,
             color=product_rgb_colors,
-            opacity=0.6
+            opacity=0.7
         ),
-        name='Products',
-        text=products_df['product_id'],
-        hoverinfo='text'
+        customdata=product_ids_for_trace,
+        text=products_df.apply(lambda row: f"ID: {row['product_id']}<br>Color: {row['color']}<br>Shape: {row['shape']}<br>Size: {row['size']}", axis=1),
+        hoverinfo='text',
+        name='Products'
     ))
 
-    # 2. Plot user vector
+    # 2. Plot the selected user vector
     fig.add_trace(go.Scatter3d(
-        x=[user_vector[0]],
-        y=[user_vector[1]],
-        z=[user_vector[2]],
-        mode='markers',
-        marker=dict(
-            size=15,
-            color='red',
-            symbol='diamond'
-        ),
-        name=f'User {selected_user_id}',
-        text=[f'User {selected_user_id}'],
-        hoverinfo='text'
+        x=[0, user_vector[0]],
+        y=[0, user_vector[1]],
+        z=[0, user_vector[2]],
+        mode='lines+markers',
+        marker=dict(size=8, color='red', symbol='diamond'),
+        line=dict(color='red', width=5),
+        name=f'Selected User ({selected_user_id})'
     ))
 
-    # 3. Plot similar users if enabled
+    # --- User Movement Trace Removed ---
+    # ... (movement trace code remains commented out) ...
+
+    # --- Restore Extra Traces --- 
+    # 4. Highlight liked products
+    if not liked_products_df.empty:
+        liked_vectors = np.stack(liked_products_df['vector'].values)
+        mask = liked_products_df['product_id'] != st.session_state.last_liked_product_id
+        if mask.any():
+            fig.add_trace(go.Scatter3d(
+                x=liked_vectors[mask, 0],
+                y=liked_vectors[mask, 1],
+                z=liked_vectors[mask, 2],
+                mode='markers',
+                marker=dict(size=7, color='red', opacity=0.8),
+                text=liked_products_df[mask].apply(lambda row: f"Liked: {row['product_id']}", axis=1),
+                hoverinfo='text',
+                name='Liked Products'
+            ))
+    
+    # 5. Plot similar users and their liked items
     if st.session_state.show_similar_users:
-        similar_users = find_similar_users(selected_user_id, users_df, n=N_SIMILAR_USERS)
-        similar_user_vectors = np.stack(similar_users['vector'].values)
-        
-        fig.add_trace(go.Scatter3d(
-            x=similar_user_vectors[:, 0],
-            y=similar_user_vectors[:, 1],
-            z=similar_user_vectors[:, 2],
-            mode='markers',
-            marker=dict(
-                size=10,
-                color='purple',
-                symbol='diamond',
-                opacity=0.7
-            ),
-            name='Similar Users',
-            text=similar_users['user_id'],
-            hoverinfo='text'
-        ))
-
-    # 4. Plot previous vector if it exists (to show movement)
-    if st.session_state.previous_user_vector is not None:
-        prev_vector = st.session_state.previous_user_vector
-        fig.add_trace(go.Scatter3d(
-            x=[prev_vector[0]],
-            y=[prev_vector[1]],
-            z=[prev_vector[2]],
-            mode='markers',
-            marker=dict(
-                size=15,
-                color='rgba(255, 0, 0, 0.3)',  # Transparent red
-                symbol='diamond'
-            ),
-            name='Previous Position',
-            text=['Previous Position'],
-            hoverinfo='text'
-        ))
-
-        # Add arrow to show movement
-        fig.add_trace(go.Scatter3d(
-            x=[prev_vector[0], user_vector[0]],
-            y=[prev_vector[1], user_vector[1]],
-            z=[prev_vector[2], user_vector[2]],
-            mode='lines',
-            line=dict(color='red', width=2),
-            name='Movement',
-            showlegend=False
-        ))
+        similar_users_df = find_similar_users(user_vector, users_df, selected_user_id, top_n=N_SIMILAR_USERS)
+        if not similar_users_df.empty:
+            similar_user_ids = similar_users_df['user_id'].tolist()
+            similar_users_vectors = np.stack(users_df[users_df['user_id'].isin(similar_user_ids)]['vector'].values)
+            fig.add_trace(go.Scatter3d(
+                x=similar_users_vectors[:, 0],
+                y=similar_users_vectors[:, 1],
+                z=similar_users_vectors[:, 2],
+                mode='markers',
+                marker=dict(size=8, color='orange', symbol='cross'),
+                text=similar_user_ids,
+                hoverinfo='text',
+                name='Similar Users'
+            ))
+            all_liked_by_similar = set()
+            for sim_user_id in similar_user_ids:
+                all_liked_by_similar.update(get_user_likes(sim_user_id))
+            liked_by_similar_df = products_df[products_df['product_id'].isin(all_liked_by_similar) & ~products_df['product_id'].isin(liked_product_ids)]
+            if not liked_by_similar_df.empty:
+                 liked_by_similar_vectors = np.stack(liked_by_similar_df['vector'].values)
+                 fig.add_trace(go.Scatter3d(
+                    x=liked_by_similar_vectors[:, 0],
+                    y=liked_by_similar_vectors[:, 1],
+                    z=liked_by_similar_vectors[:, 2],
+                    mode='markers',
+                    marker=dict(size=6, color='orange', opacity=0.6),
+                    text=liked_by_similar_df.apply(lambda row: f"Liked by Similar: {row['product_id']}", axis=1),
+                    hoverinfo='text',
+                    name='Liked by Similar Users'
+                ))
+    
+    # 6. Highlight Top Recommended Products
+    if st.session_state.highlight_recommendations:
+        # Note: find_similar_products is called again in col2, consider optimizing if performance is an issue
+        recommended_products_highlight_df = find_similar_products(user_vector, products_df, top_n=N_RECOMMENDATIONS)
+        if not recommended_products_highlight_df.empty:
+            rec_vectors = np.stack(recommended_products_highlight_df['vector'].values)
+            fig.add_trace(go.Scatter3d(
+                x=rec_vectors[:, 0],
+                y=rec_vectors[:, 1],
+                z=rec_vectors[:, 2],
+                mode='markers',
+                marker=dict(size=9, color='yellow', symbol='circle', opacity=0.9, line=dict(color='black', width=1)),
+                text=recommended_products_highlight_df.apply(lambda row: f"Recommended: {row['product_id']}<br>Distance: {row['distance']:.3f}", axis=1),
+                hoverinfo='text',
+                name='Top Recommendations'
+            ))
+    # --- End of Restored Traces --- 
 
     # --- Layout Settings for Plot ---
     fig.update_layout(
@@ -323,6 +333,9 @@ with col1:
 
     # --- Use st.plotly_chart for rendering ---
     st.plotly_chart(fig, use_container_width=True)
+
+    # --- Click Handling Logic Removed ---
+    # if clicked_points: ...
 
 with col2:
     st.header(f"🎨 Top {N_RECOMMENDATIONS} Recommended Colors") # Updated header
